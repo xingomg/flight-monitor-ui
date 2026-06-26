@@ -338,6 +338,14 @@
 const LOCAL_API  = 'http://localhost:5678';
 const REMOTE_API = 'https://provoking-spearman-tux.ngrok-free.dev';
 let API = LOCAL_API;
+
+// Returns fetch headers for API calls — adds ngrok bypass when using the tunnel
+function apiHeaders(extra) {
+    const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+    if (API === REMOTE_API) h['ngrok-skip-browser-warning'] = '1';
+    return h;
+}
+
 const SUPABASE_URL = 'https://fgimfhpdbrthkcarxwhe.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_KVuJpRGZOYE7T5oZ0Y-3TA_2hHQ7_MM';
 const SB = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
@@ -531,13 +539,13 @@ document.getElementById('btnSearch').addEventListener('click', async () => {
     try {
         const body={origin,destination:dest,dateFrom,dateTo};
         if (tripType==='roundTrip') { body.tripType='roundTrip'; body.returnDate=returnDate; }
-        const res=await fetch(`${API}/api/search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const res=await fetch(`${API}/api/search`,{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)});
         const {jobId}=await res.json();
         const useAccordion=tripType==='range';
         let lastCount=0;
         searchPoll=setInterval(async ()=>{
             try {
-                const s=await fetch(`${API}/api/search/status?jobId=${jobId}`).then(r=>r.json());
+                const s=await fetch(`${API}/api/search/status?jobId=${jobId}`,{headers:apiHeaders()}).then(r=>r.json());
                 if (s.results&&s.results.length>lastCount) {
                     for (let i=lastCount;i<s.results.length;i++) { accumulatedResults.push(s.results[i]); appendResult(s.results[i],useAccordion,i); }
                     lastCount=s.results.length; updatePill(lastCount);
@@ -705,7 +713,7 @@ function renderRoundTripSearch(container, result) {
 
         fetch(API + '/api/search/bundled-returns', {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: apiHeaders(),
             body: JSON.stringify({
                 origin:            cs.origin,
                 destination:       cs.dest,
@@ -733,7 +741,7 @@ function renderRoundTripSearch(container, result) {
         var retMsg = document.getElementById('rtReturnMsg');
         if (!retMsg) { return; }  // user navigated away or re-searched
 
-        fetch(API + '/api/search/status?jobId=' + jobId)
+        fetch(API + '/api/search/status?jobId=' + jobId, { headers: apiHeaders() })
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (myGen !== rtBundledGen) return;
@@ -1138,7 +1146,7 @@ document.getElementById('btnRefreshNow').addEventListener('click', async () => {
     const btn = document.getElementById('btnRefreshNow');
     btn.textContent = 'Refreshing…';
     btn.disabled = true;
-    try { await fetch(`${API}/api/monitor/refresh`, { method: 'POST' }); } catch {}
+    try { await fetch(`${API}/api/monitor/refresh`, { method: 'POST', headers: apiHeaders() }); } catch {}
     setTimeout(() => {
         loadWatches();
         btn.textContent = 'Refresh Now';
