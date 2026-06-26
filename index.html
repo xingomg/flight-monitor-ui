@@ -335,7 +335,9 @@
 </div>
 
 <script>
-const API = 'http://localhost:5678';
+const LOCAL_API  = 'http://localhost:5678';
+const REMOTE_API = 'https://provoking-spearman-tux.ngrok-free.dev';
+let API = LOCAL_API;
 const SUPABASE_URL = 'https://fgimfhpdbrthkcarxwhe.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_KVuJpRGZOYE7T5oZ0Y-3TA_2hHQ7_MM';
 const SB = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
@@ -407,15 +409,25 @@ function doLogout() {
 let localServerAvailable = false;
 
 async function checkLocalServer() {
+    // Try local first
     try {
-        await fetch(`${API}/`, { mode: 'no-cors', signal: AbortSignal.timeout(1500) });
+        await fetch(`${LOCAL_API}/`, { mode: 'no-cors', signal: AbortSignal.timeout(1500) });
+        API = LOCAL_API;
         localServerAvailable = true;
-    } catch {
-        localServerAvailable = false;
-    }
+        return;
+    } catch {}
+    // Fall back to ngrok tunnel
+    try {
+        await fetch(`${REMOTE_API}/`, { mode: 'no-cors', signal: AbortSignal.timeout(4000) });
+        API = REMOTE_API;
+        localServerAvailable = true;
+        return;
+    } catch {}
+    // Neither available
+    localServerAvailable = false;
     const searchPanel = document.getElementById('searchPanel');
-    if (!localServerAvailable && searchPanel) {
-        searchPanel.innerHTML = '<div class="empty-state" style="padding:40px 20px;"><div class="empty-icon">&#128274;</div><p style="color:#94a3b8;margin-top:12px;">Search requires local access — open this page on your home machine to use flight search.</p></div>';
+    if (searchPanel) {
+        searchPanel.innerHTML = '<div class="empty-state" style="padding:40px 20px;"><div class="empty-icon">&#128274;</div><p style="color:#94a3b8;margin-top:12px;">Search unavailable — start ngrok on your home machine to enable remote search.</p></div>';
         const btnRefresh = document.getElementById('btnRefreshNow');
         if (btnRefresh) { btnRefresh.disabled = true; btnRefresh.title = 'Requires local server'; }
     }
