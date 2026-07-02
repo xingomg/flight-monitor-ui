@@ -137,6 +137,9 @@
   .card-edit.open { display: block; }
   .card-edit .row2 { grid-template-columns: 1fr 1fr; gap: 8px; }
   .card-edit .btn-primary { margin: 8px 0 0; padding: 7px; font-size: 11px; }
+  .card-history { margin-top: 10px; display: none; }
+  .card-history.open { display: block; }
+  .hist-msg { color: #94a3b8; font-size: 0.8rem; padding: 4px 0; }
 
   /* ── Results hero ── */
   .results-hero { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -232,6 +235,8 @@
   .rt-row-meta { font-size:11px; color:var(--muted); }
   .rt-row-price { font-family:var(--mono); font-size:13px; font-weight:700; color:var(--text); text-align:right; white-space:nowrap; }
   .rt-price-note { font-family:var(--display); font-size:10px; font-weight:400; color:var(--amber); display:block; }
+  .price-delta-down { color: #4ade80; font-size: 0.8rem; margin-left: 6px; }
+  .price-delta-up   { color: #f87171; font-size: 0.8rem; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -300,12 +305,31 @@
       </button>
       <div class="nav-space"></div>
       <span class="refresh-lbl" id="refreshTime"></span>
+      <button class="btn btn-ghost" id="btnAddWatch" style="margin-left:8px">+ Add Watch</button>
       <button class="btn btn-ghost" id="btnRefreshNow" style="margin-left:8px">Refresh Now</button>
+      <button class="btn btn-ghost" id="btnTestEmail" style="margin-left:8px">Test Email</button>
       <button onclick="doLogout()" style="margin-left:8px;background:transparent;border:1px solid #334155;border-radius:6px;color:#94a3b8;padding:4px 10px;cursor:pointer;font-size:0.8rem;">Logout</button>
     </div>
 
     <!-- Watch List View -->
     <div id="watchView" class="view-panel">
+      <div id="addWatchForm" style="display:none;padding:14px;margin:12px;border:1px solid var(--border);border-radius:10px;background:rgba(15,22,41,0.7);max-width:680px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div class="field"><label>From</label><input id="awOrigin" placeholder="SFO" style="text-transform:uppercase"></div>
+          <div class="field"><label>To</label><input id="awDest" placeholder="HKG" style="text-transform:uppercase"></div>
+          <div class="field"><label>Trip</label><select id="awTrip"><option value="oneWay">One-way</option><option value="roundTrip">Round trip</option></select></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+          <div class="field"><label>Departure</label><input type="date" id="awDate"></div>
+          <div class="field" id="awReturnWrap" style="display:none"><label>Return</label><input type="date" id="awReturn"></div>
+          <div class="field"><label>Airline (optional)</label><input id="awAirline" placeholder="Any"></div>
+          <div class="field"><label>Target price (optional)</label><input type="number" id="awTarget" step="0.01"></div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-primary" id="awSubmit">ADD WATCH</button>
+          <span id="awError" style="color:#f87171;font-size:0.8rem;"></span>
+        </div>
+      </div>
       <div class="watch-grid" id="watchCards">
         <div class="empty-state"><div class="empty-icon">&#9992;</div>No watches yet.<br>Search for a flight and add it to your list.</div>
       </div>
@@ -334,10 +358,12 @@
 </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
 const LOCAL_API  = 'http://localhost:5678';
 const REMOTE_API = 'https://provoking-spearman-tux.ngrok-free.dev';
 let API = LOCAL_API;
+const CHECK_INTERVAL_MIN = 30;   // must match the monitor loop wait in server.ps1 (1800000 ms)
 
 // Returns fetch headers for API calls — adds ngrok bypass when using the tunnel
 function apiHeaders(extra) {
@@ -438,6 +464,8 @@ async function checkLocalServer() {
         searchPanel.innerHTML = '<div class="empty-state" style="padding:40px 20px;"><div class="empty-icon">&#128274;</div><p style="color:#94a3b8;margin-top:12px;">Search unavailable — start ngrok on your home machine to enable remote search.</p></div>';
         const btnRefresh = document.getElementById('btnRefreshNow');
         if (btnRefresh) { btnRefresh.disabled = true; btnRefresh.title = 'Requires local server'; }
+        const btnEmail = document.getElementById('btnTestEmail');
+        if (btnEmail) { btnEmail.disabled = true; btnEmail.title = 'Requires local server'; }
     }
 }
 
@@ -902,11 +930,7 @@ document.getElementById('btnAddSelected').addEventListener('click', async () => 
             lastChecked:         null,
             addedAt:             new Date().toISOString()
         };
-        return fetch(`${SUPABASE_URL}/rest/v1/watches`, {
-            method: 'POST',
-            headers: { ...SB, Prefer: 'return=minimal' },
-            body: JSON.stringify(watch)
-        }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r; });
+        return createWatch(watch);
     });
     try {
         await Promise.all(reqs);
@@ -920,13 +944,32 @@ document.getElementById('btnAddSelected').addEventListener('click', async () => 
     } catch(e) { alert('Error: ' + e.message); }
 });
 
+let priceDeltas = {};   // watchId -> signed change since previous check
+
+function createWatch(watch) {
+    return fetch(`${SUPABASE_URL}/rest/v1/watches`, {
+        method: 'POST',
+        headers: { ...SB, Prefer: 'return=minimal' },
+        body: JSON.stringify(watch)
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r; });
+}
+
 async function loadWatches() {
     if (!currentUser) return;
     try {
-        const w = await fetch(
-            `${SUPABASE_URL}/rest/v1/watches?order=addedAt.asc`,
-            { headers: SB }
-        ).then(r => r.json());
+        const [w, logs] = await Promise.all([
+            fetch(`${SUPABASE_URL}/rest/v1/watches?order=addedAt.asc`, { headers: SB }).then(r => r.json()),
+            fetch(`${SUPABASE_URL}/rest/v1/price_log?order=checked_at.desc&limit=200`, { headers: SB }).then(r => r.json()).catch(() => [])
+        ]);
+        priceDeltas = {};
+        if (Array.isArray(logs)) {
+            const byWatch = {};
+            logs.forEach(r => { (byWatch[r.watch_id] = byWatch[r.watch_id] || []).push(parseFloat(r.price)); });
+            for (const wid in byWatch) {
+                const p = byWatch[wid];   // newest first
+                if (p.length >= 2 && p[0] !== p[1]) priceDeltas[wid] = p[0] - p[1];
+            }
+        }
         renderWatches(Array.isArray(w) ? w : [w]);
         document.getElementById('refreshTime').textContent = 'Updated ' + new Date().toLocaleTimeString();
     } catch(e) {
@@ -935,6 +978,9 @@ async function loadWatches() {
 }
 
 function renderWatches(watches) {
+    Object.values(historyCharts).forEach(c => { try { c.destroy(); } catch {} });
+    for (const k in historyCharts) delete historyCharts[k];
+    for (const k in historyLoaded) delete historyLoaded[k];
     const el=document.getElementById('watchCards');
     if (!watches||watches.length===0) { el.innerHTML='<div class="empty-state"><div class="empty-icon">&#9992;</div>No watches yet.</div>'; return; }
     el.innerHTML=''; watches.forEach(w=>el.appendChild(buildCard(w)));
@@ -946,6 +992,10 @@ function buildCard(w) {
     const timeStr=w.departureTime?' · '+w.departureTime:'';
     const dateStr=w.dateMode==='range'?`${w.dateFrom} to ${w.dateTo}`:isRound?`${w.departureDate} -> ${w.returnDate}`:`${w.departureDate}${timeStr}`;
     const priceStr=w.lastPrice!=null?`${wCur} ${parseFloat(w.lastPrice).toFixed(2)}`:'--';
+    const delta = priceDeltas[w.id];
+    const deltaHtml = delta != null
+        ? `<span class="price-delta-${delta < 0 ? 'down' : 'up'}">${delta < 0 ? '&#9660;' : '&#9650;'} ${wCur} ${Math.abs(delta).toFixed(2)}</span>`
+        : '';
     const isAbove=w.targetPrice!=null&&w.lastPrice!=null&&parseFloat(w.lastPrice)>parseFloat(w.targetPrice);
     const targetStr=w.targetPrice!=null?`target <span class="${!isAbove?'hit':''}">${wCur} ${parseFloat(w.targetPrice).toFixed(2)}</span>`:'no target';
     let sc='ok',sl='OK';
@@ -959,11 +1009,12 @@ function buildCard(w) {
     div.dataset.id=w.id;
     div.innerHTML=`${airlineHtml}
       <div class="card-route">${w.origin} ${isRound?'&#8644;':'&#8594;'} ${w.destination} ${lBadge}${rBadge}${rtBadge}</div>
-      <div class="card-date">${dateStr} &middot; every 30 min</div>
-      <div class="card-prices"><div class="card-price-now${isAbove?' above-target':''}">${priceStr}</div><div class="card-price-target">${targetStr}</div></div>
+      <div class="card-date">${dateStr} &middot; every ${CHECK_INTERVAL_MIN} min</div>
+      <div class="card-prices"><div class="card-price-now${isAbove?' above-target':''}">${priceStr} ${deltaHtml}</div><div class="card-price-target">${targetStr}</div></div>
       <div class="card-meta"><span class="card-status ${sc}">${sl}</span><span class="card-checked">${w.lastChecked||'Never checked'}</span></div>
       <div class="card-actions">
         <button class="btn btn-ghost" onclick="window.open('${buildFlightUrl(w)}','_blank')">View</button>
+        <button class="btn btn-ghost" onclick="toggleHistory('${w.id}')">History</button>
         <button class="btn btn-ghost" onclick="toggleEdit('${w.id}')">Edit</button>
         <button class="btn btn-ghost" onclick="toggleWatch('${w.id}',${!w.enabled})">${w.enabled?'Disable':'Enable'}</button>
         <button class="btn btn-danger" onclick="removeWatch('${w.id}')">Remove</button>
@@ -973,11 +1024,58 @@ function buildCard(w) {
           <div class="field"><label>Target Price</label><input type="number" id="et-${w.id}" value="${w.targetPrice!=null?w.targetPrice:''}" placeholder="none" step="0.01"></div>
         </div>
         <button class="btn btn-primary" onclick="saveEdit('${w.id}')">SAVE</button>
-      </div>`;
+      </div>
+      <div class="card-history" id="hist-${w.id}"><canvas id="histcv-${w.id}" height="120"></canvas><div class="hist-msg" id="histmsg-${w.id}"></div></div>`;
     return div;
 }
 
 function toggleEdit(id){document.getElementById(`edit-${id}`).classList.toggle('open');}
+
+const historyLoaded = {};   // watchId -> true once fetched
+const historyCharts = {};   // watchId -> Chart instance
+
+async function toggleHistory(id) {
+    const panel = document.getElementById(`hist-${id}`);
+    if (!panel) return;
+    const opening = !panel.classList.contains('open');
+    panel.classList.toggle('open');
+    if (!opening || historyLoaded[id]) return;
+
+    const msg = document.getElementById(`histmsg-${id}`);
+    if (typeof Chart === 'undefined') { msg.textContent = 'Chart library unavailable.'; return; }
+    try {
+        const rows = await fetch(
+            `${SUPABASE_URL}/rest/v1/price_log?watch_id=eq.${id}&order=checked_at.asc&limit=500`,
+            { headers: SB }
+        ).then(r => r.json());
+        if (!Array.isArray(rows) || rows.length < 2) {
+            msg.textContent = 'Not enough history yet.';
+            historyLoaded[id] = true;
+            return;
+        }
+        const pad = n => String(n).padStart(2, '0');
+        const labels = rows.map(r => {
+            const d = new Date(r.checked_at);
+            return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        });
+        const data = rows.map(r => parseFloat(r.price));
+        if (historyCharts[id]) { try { historyCharts[id].destroy(); } catch {} }
+        historyCharts[id] = new Chart(document.getElementById(`histcv-${id}`), {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Price', data, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, tension: 0.2, pointRadius: 2 }] },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 6, color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                    y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } }
+                }
+            }
+        });
+        historyLoaded[id] = true;
+    } catch (e) {
+        msg.textContent = 'Could not load history.';
+    }
+}
 async function saveEdit(id) {
     const t = document.getElementById(`et-${id}`).value.trim();
     await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
@@ -1142,6 +1240,51 @@ function setupAirportAutocomplete(inputId) {
 setupAirportAutocomplete('inFrom');
 setupAirportAutocomplete('inTo');
 
+document.getElementById('btnAddWatch').addEventListener('click', () => {
+    const f = document.getElementById('addWatchForm');
+    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    switchTab('watches');
+});
+document.getElementById('awTrip').addEventListener('change', e => {
+    document.getElementById('awReturnWrap').style.display = e.target.value === 'roundTrip' ? 'block' : 'none';
+});
+document.getElementById('awSubmit').addEventListener('click', async () => {
+    const err = document.getElementById('awError');
+    err.textContent = '';
+    const origin  = document.getElementById('awOrigin').value.trim().toUpperCase();
+    const dest    = document.getElementById('awDest').value.trim().toUpperCase();
+    const trip    = document.getElementById('awTrip').value;
+    const date    = document.getElementById('awDate').value;
+    const ret     = document.getElementById('awReturn').value;
+    const airline = document.getElementById('awAirline').value.trim();
+    const target  = document.getElementById('awTarget').value;
+    if (!/^[A-Z]{3}$/.test(origin))       { err.textContent = 'From must be a 3-letter airport code.'; return; }
+    if (!/^[A-Z]{3}$/.test(dest))         { err.textContent = 'To must be a 3-letter airport code.'; return; }
+    if (!date)                            { err.textContent = 'Departure date is required.'; return; }
+    if (trip === 'roundTrip' && !ret)     { err.textContent = 'Return date is required for round trip.'; return; }
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(16).padStart(2, '0')).join('');
+    const isRT = trip === 'roundTrip';
+    const label = `${airline || 'Any'} | ${origin} ${isRT ? '<->' : '->'} ${dest} | ${isRT ? date + ' / ' + ret : date}`;
+    const watch = {
+        id, label, origin, destination: dest,
+        dateMode: 'specific', departureDate: date,
+        returnDate: isRT ? ret : null, tripType: trip,
+        currency: 'USD', targetPrice: target ? parseFloat(target) : null,
+        airline: airline || null, flightNumber: null, departureTime: null,
+        returnAirline: null, returnFlightNumber: null, returnDepartureTime: null,
+        enabled: true, status: 'Pending', lastPrice: null, lowestSeen: null,
+        lastChecked: null, addedAt: new Date().toISOString()
+    };
+    try {
+        await createWatch(watch);
+        document.getElementById('addWatchForm').style.display = 'none';
+        ['awOrigin','awDest','awDate','awReturn','awAirline','awTarget'].forEach(i => { document.getElementById(i).value = ''; });
+        loadWatches();
+    } catch (e) { err.textContent = 'Error: ' + e.message; }
+});
+setupAirportAutocomplete('awOrigin');
+setupAirportAutocomplete('awDest');
+
 document.getElementById('btnRefreshNow').addEventListener('click', async () => {
     const btn = document.getElementById('btnRefreshNow');
     btn.textContent = 'Refreshing…';
@@ -1152,6 +1295,18 @@ document.getElementById('btnRefreshNow').addEventListener('click', async () => {
         btn.textContent = 'Refresh Now';
         btn.disabled = false;
     }, 3000);
+});
+
+document.getElementById('btnTestEmail').addEventListener('click', async () => {
+    const btn = document.getElementById('btnTestEmail');
+    btn.disabled = true; btn.textContent = 'Sending...';
+    try {
+        const r = await fetch(`${API}/api/alert/test`, { method: 'POST', headers: apiHeaders() });
+        const d = await r.json();
+        btn.textContent = d.sent ? 'Sent!' : 'Failed';
+        if (!d.sent) console.error('Test email failed:', d.error);
+    } catch (e) { btn.textContent = 'Failed'; }
+    setTimeout(() => { btn.textContent = 'Test Email'; btn.disabled = !localServerAvailable; }, 5000);
 });
 
 document.getElementById('btnSwap').addEventListener('click', () => {
