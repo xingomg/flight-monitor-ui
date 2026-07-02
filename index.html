@@ -568,7 +568,9 @@ document.getElementById('btnSearch').addEventListener('click', async () => {
         const body={origin,destination:dest,dateFrom,dateTo};
         if (tripType==='roundTrip') { body.tripType='roundTrip'; body.returnDate=returnDate; }
         const res=await fetch(`${API}/api/search`,{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)});
-        const {jobId}=await res.json();
+        const d=await res.json();
+        if (!res.ok || !d.jobId) throw new Error(d.error || ('HTTP ' + res.status));
+        const jobId=d.jobId;
         const useAccordion=tripType==='range';
         let lastCount=0;
         searchPoll=setInterval(async ()=>{
