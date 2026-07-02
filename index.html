@@ -93,7 +93,7 @@
   .content-area { display: flex; flex-direction: column; overflow: hidden; }
 
   /* ── Tab nav ── */
-  .content-nav { display: flex; align-items: stretch; flex-shrink: 0; border-bottom: 1px solid var(--border); background: rgba(15,22,41,0.7); }
+  .content-nav { display: flex; align-items: stretch; flex-shrink: 0; border-bottom: 1px solid var(--border); background: rgba(15,22,41,0.95); position: sticky; top: 0; z-index: 20; }
   .view-tab { font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 11px 18px; cursor: pointer; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); transition: all 0.15s; white-space: nowrap; }
   .view-tab:hover:not(:disabled) { color: var(--text); }
   .view-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
@@ -133,12 +133,12 @@
   .badge      { font-size: 9px; font-weight: 700; padding: 2px 6px; letter-spacing: 0.1em; text-transform: uppercase; }
   .badge-drop  { background: rgba(16,185,129,0.15); color: var(--green); }
   .badge-range { background: rgba(245,158,11,0.1);  color: var(--amber); }
-  .card-edit { display: none; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
-  .card-edit.open { display: block; }
+  .card-edit { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; margin-top: 0; border-top: none; }
+  .card-edit.open { max-height: 400px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
   .card-edit .row2 { grid-template-columns: 1fr 1fr; gap: 8px; }
   .card-edit .btn-primary { margin: 8px 0 0; padding: 7px; font-size: 11px; }
-  .card-history { margin-top: 10px; display: none; }
-  .card-history.open { display: block; }
+  .card-history { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; margin-top: 0; }
+  .card-history.open { max-height: 400px; margin-top: 10px; }
   .hist-msg { color: #94a3b8; font-size: 0.8rem; padding: 4px 0; }
 
   /* ── Results hero ── */
@@ -237,6 +237,31 @@
   .rt-price-note { font-family:var(--display); font-size:10px; font-weight:400; color:var(--amber); display:block; }
   .price-delta-down { color: #4ade80; font-size: 0.8rem; margin-left: 6px; }
   .price-delta-up   { color: #f87171; font-size: 0.8rem; margin-left: 6px; }
+
+  .layout.remote-mode { grid-template-columns: 1fr; }
+  #remoteBanner { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: rgba(245,158,11,0.08); border-left: 3px solid var(--amber); color: #cbd5e1; font-size: 0.8rem; }
+  #remoteBanner button { margin-left: auto; background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.9rem; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1e293b; border: 1px solid var(--border2); color: #e2e8f0; padding: 10px 18px; border-radius: 999px; font-size: 0.85rem; z-index: 999; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+
+  /* ---- Mobile (<=768px) ---- */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .panel-title .panel-chevron { display: none; }
+  @media (max-width: 768px) {
+    .layout { grid-template-columns: 1fr; }
+    .panel { border-right: none; border-bottom: 1px solid var(--border); padding: 14px 16px; }
+    .panel-title { cursor: pointer; margin-bottom: 0; display: flex; align-items: center; justify-content: space-between; }
+    .panel-title .panel-chevron { display: inline; font-size: 12px; }
+    .panel.collapsed > *:not(.panel-title) { display: none; }
+    .panel:not(.collapsed) .panel-title { margin-bottom: 14px; }
+    .content-nav { flex-wrap: wrap; padding: 4px; }
+    .refresh-lbl { display: none; }
+    .card-actions .btn { padding: 10px 14px; }
+    .field input, .field select { font-size: 16px; padding: 10px 12px; }
+    .rt-flight-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .rt-row { min-width: 460px; }
+  }
 </style>
 </head>
 <body>
@@ -264,11 +289,11 @@
   <span class="status-label" id="hdrStatus">LIVE</span>
 </header>
 
-<div class="layout">
+<div class="layout" id="layoutRoot">
 
   <!-- Search Panel -->
   <div class="panel" id="searchPanel">
-    <div class="panel-title">Search Flights</div>
+    <div class="panel-title" id="panelTitle" onclick="togglePanelCollapse()">Search Flights <span class="panel-chevron" id="panelChevron">&#9662;</span></div>
     <div class="row2" style="align-items:flex-end">
       <div class="field"><label>From</label><input type="text" id="inFrom" value="SFO" style="text-transform:uppercase" autocomplete="off"></div>
       <button class="btn btn-ghost" id="btnSwap" style="padding:6px 8px;margin-bottom:2px" title="Swap airports">&#8644;</button>
@@ -460,13 +485,20 @@ async function checkLocalServer() {
     // Neither available
     localServerAvailable = false;
     const searchPanel = document.getElementById('searchPanel');
-    if (searchPanel) {
-        searchPanel.innerHTML = '<div class="empty-state" style="padding:40px 20px;"><div class="empty-icon">&#128274;</div><p style="color:#94a3b8;margin-top:12px;">Search unavailable — start ngrok on your home machine to enable remote search.</p></div>';
-        const btnRefresh = document.getElementById('btnRefreshNow');
-        if (btnRefresh) { btnRefresh.disabled = true; btnRefresh.title = 'Requires local server'; }
-        const btnEmail = document.getElementById('btnTestEmail');
-        if (btnEmail) { btnEmail.disabled = true; btnEmail.title = 'Requires local server'; }
+    if (searchPanel) searchPanel.style.display = 'none';
+    const layoutRoot = document.getElementById('layoutRoot');
+    if (layoutRoot) layoutRoot.classList.add('remote-mode');
+    const nav = document.querySelector('.content-nav');
+    if (nav && !document.getElementById('remoteBanner')) {
+        const b = document.createElement('div');
+        b.id = 'remoteBanner';
+        b.innerHTML = 'Search requires your home machine - watches update automatically. <button onclick="document.getElementById(\'remoteBanner\').remove()" title="Dismiss">&#10005;</button>';
+        nav.parentElement.insertBefore(b, nav);
     }
+    const btnRefresh = document.getElementById('btnRefreshNow');
+    if (btnRefresh) { btnRefresh.disabled = true; btnRefresh.title = 'Requires local server'; }
+    const btnEmail = document.getElementById('btnTestEmail');
+    if (btnEmail) { btnEmail.disabled = true; btnEmail.title = 'Requires local server'; }
 }
 
 function buildFlightUrl(w) {
@@ -478,6 +510,27 @@ function buildFlightUrl(w) {
     const date = w.departureDate;
     return base + 'one+way+flights+from+' + w.origin + '+to+' + w.destination + '+on+' + date;
 }
+function showToast(msg) {
+    if (!document.body) return;
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2500);
+}
+function toIsoDate(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+(function setDefaultDates() {
+    const plus = days => { const d = new Date(); d.setDate(d.getDate() + days); return toIsoDate(d); };
+    const d14 = plus(14), d21 = plus(21);
+    [['inSingleDate', d14], ['inDateFrom', d14], ['inDateTo', d21], ['inDepart', d14], ['inReturn', d21], ['awDate', d14], ['awReturn', d21]].forEach(([id, v]) => {
+        const el = document.getElementById(id);
+        if (el && !el.value) el.value = v;
+    });
+})();
 let selectedFlights    = [];
 let currentSearch      = null;
 let searchPoll         = null;
@@ -490,13 +543,6 @@ const pad  = n => String(n).padStart(2,'0');
 const fmt  = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const fmtD = s => { if (!s) return ''; const p = s.split('-'); return `${p[2]} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+p[1]-1]} ${p[0]}`; };
 const fmtN = n => Number(n).toLocaleString('en-US', {minimumFractionDigits:0,maximumFractionDigits:0});
-
-const today = new Date();
-document.getElementById('inSingleDate').value = fmt(new Date(today.getTime()+30*86400000));
-document.getElementById('inDateFrom').value   = fmt(new Date(today.getTime()+30*86400000));
-document.getElementById('inDateTo').value     = fmt(new Date(today.getTime()+60*86400000));
-document.getElementById('inDepart').value     = fmt(new Date(today.getTime()+30*86400000));
-document.getElementById('inReturn').value     = fmt(new Date(today.getTime()+37*86400000));
 
 document.querySelectorAll('[name=tripType]').forEach(r => r.addEventListener('change', () => {
     const v = document.querySelector('[name=tripType]:checked').value;
@@ -608,7 +654,10 @@ function buildFlightTable(container, flights, dateInfo) {
       <th class="col-times">Times</th><th class="col-dur">Duration</th>
       <th class="col-stops">Stops</th><th class="col-price">Price</th>
     </tr></thead><tbody></tbody>`;
-    container.appendChild(table);
+    const scroll=document.createElement('div');
+    scroll.className='table-scroll';
+    scroll.appendChild(table);
+    container.appendChild(scroll);
     const tbody=table.querySelector('tbody');
     flights.forEach((f,i)=>{
         const isBest=f.price===minP;
@@ -943,6 +992,7 @@ document.getElementById('btnAddSelected').addEventListener('click', async () => 
         updateAddBar();
         document.getElementById('addTarget').value = '';
         await loadWatches(); switchTab('watches');
+        showToast(reqs.length > 1 ? reqs.length + ' watches added' : 'Watch added');
     } catch(e) { alert('Error: ' + e.message); }
 });
 
@@ -1086,6 +1136,7 @@ async function saveEdit(id) {
         body: JSON.stringify({ targetPrice: t ? parseFloat(t) : null })
     });
     loadWatches();
+    showToast('Target saved');
 }
 async function toggleWatch(id, enabled) {
     await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
@@ -1094,6 +1145,7 @@ async function toggleWatch(id, enabled) {
         body: JSON.stringify({ enabled })
     });
     loadWatches();
+    showToast(enabled ? 'Watch enabled' : 'Watch disabled');
 }
 async function removeWatch(id) {
     if (!confirm('Remove this watch?')) return;
@@ -1102,6 +1154,7 @@ async function removeWatch(id) {
         headers: SB
     });
     loadWatches();
+    showToast('Watch removed');
 }
 
 // ── Airport autocomplete data ─────────────────────────────────────────────
@@ -1282,10 +1335,24 @@ document.getElementById('awSubmit').addEventListener('click', async () => {
         document.getElementById('addWatchForm').style.display = 'none';
         ['awOrigin','awDest','awDate','awReturn','awAirline','awTarget'].forEach(i => { document.getElementById(i).value = ''; });
         loadWatches();
+        showToast('Watch added');
     } catch (e) { err.textContent = 'Error: ' + e.message; }
 });
 setupAirportAutocomplete('awOrigin');
 setupAirportAutocomplete('awDest');
+
+function togglePanelCollapse() {
+    if (window.innerWidth > 768) return;   // desktop: no-op
+    const panel = document.getElementById('searchPanel');
+    const chev  = document.getElementById('panelChevron');
+    panel.classList.toggle('collapsed');
+    if (chev) chev.innerHTML = panel.classList.contains('collapsed') ? '&#9662;' : '&#9652;';
+}
+// Collapse search panel by default on mobile
+if (window.innerWidth <= 768) {
+    const p = document.getElementById('searchPanel');
+    if (p) p.classList.add('collapsed');
+}
 
 document.getElementById('btnRefreshNow').addEventListener('click', async () => {
     const btn = document.getElementById('btnRefreshNow');
@@ -1306,6 +1373,7 @@ document.getElementById('btnTestEmail').addEventListener('click', async () => {
         const r = await fetch(`${API}/api/alert/test`, { method: 'POST', headers: apiHeaders() });
         const d = await r.json();
         btn.textContent = d.sent ? 'Sent!' : 'Failed';
+        showToast(d.sent ? 'Test email sent' : 'Test email failed');
         if (!d.sent) console.error('Test email failed:', d.error);
     } catch (e) { btn.textContent = 'Failed'; }
     setTimeout(() => { btn.textContent = 'Test Email'; btn.disabled = !localServerAvailable; }, 5000);
