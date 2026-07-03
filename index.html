@@ -39,7 +39,7 @@
     display: flex; align-items: center; padding: 12px 20px;
     border-bottom: 1px solid var(--border);
     background: rgba(15,22,41,0.92); backdrop-filter: blur(10px);
-    position: sticky; top: 0; z-index: 20;
+    position: sticky; top: 0; z-index: 30;
   }
   .logo { font-size: 18px; font-weight: 700; letter-spacing: 0.12em; color: var(--amber); text-transform: uppercase; }
   .logo span { color: var(--text); font-weight: 400; }
@@ -90,10 +90,10 @@
   .search-status.error { color: var(--red); }
 
   /* ── Content Area ── */
-  .content-area { display: flex; flex-direction: column; overflow: hidden; }
+  .content-area { display: flex; flex-direction: column; }
 
   /* ── Tab nav ── */
-  .content-nav { display: flex; align-items: stretch; flex-shrink: 0; border-bottom: 1px solid var(--border); background: rgba(15,22,41,0.95); position: sticky; top: 0; z-index: 20; }
+  .content-nav { display: flex; align-items: stretch; flex-shrink: 0; border-bottom: 1px solid var(--border); background: rgba(15,22,41,0.95); position: sticky; top: 49px; z-index: 20; }
   .view-tab { font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 11px 18px; cursor: pointer; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); transition: all 0.15s; white-space: nowrap; }
   .view-tab:hover:not(:disabled) { color: var(--text); }
   .view-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
@@ -1130,31 +1130,31 @@ async function toggleHistory(id) {
 }
 async function saveEdit(id) {
     const t = document.getElementById(`et-${id}`).value.trim();
-    await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
         method: 'PATCH',
         headers: { ...SB, Prefer: 'return=minimal' },
         body: JSON.stringify({ targetPrice: t ? parseFloat(t) : null })
     });
     loadWatches();
-    showToast('Target saved');
+    showToast(res.ok ? 'Target saved' : 'Save failed');
 }
 async function toggleWatch(id, enabled) {
-    await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
         method: 'PATCH',
         headers: { ...SB, Prefer: 'return=minimal' },
         body: JSON.stringify({ enabled })
     });
     loadWatches();
-    showToast(enabled ? 'Watch enabled' : 'Watch disabled');
+    showToast(res.ok ? (enabled ? 'Watch enabled' : 'Watch disabled') : 'Update failed');
 }
 async function removeWatch(id) {
     if (!confirm('Remove this watch?')) return;
-    await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
         method: 'DELETE',
         headers: SB
     });
     loadWatches();
-    showToast('Watch removed');
+    showToast(res.ok ? 'Watch removed' : 'Remove failed');
 }
 
 // ── Airport autocomplete data ─────────────────────────────────────────────
@@ -1317,6 +1317,7 @@ document.getElementById('awSubmit').addEventListener('click', async () => {
     if (!/^[A-Z]{3}$/.test(dest))         { err.textContent = 'To must be a 3-letter airport code.'; return; }
     if (!date)                            { err.textContent = 'Departure date is required.'; return; }
     if (trip === 'roundTrip' && !ret)     { err.textContent = 'Return date is required for round trip.'; return; }
+    if (trip === 'roundTrip' && ret && ret < date) { err.textContent = 'Return date must be on or after departure.'; return; }
     const id = Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(16).padStart(2, '0')).join('');
     const isRT = trip === 'roundTrip';
     const label = `${airline || 'Any'} | ${origin} ${isRT ? '<->' : '->'} ${dest} | ${isRT ? date + ' / ' + ret : date}`;
@@ -1375,7 +1376,7 @@ document.getElementById('btnTestEmail').addEventListener('click', async () => {
         btn.textContent = d.sent ? 'Sent!' : 'Failed';
         showToast(d.sent ? 'Test email sent' : 'Test email failed');
         if (!d.sent) console.error('Test email failed:', d.error);
-    } catch (e) { btn.textContent = 'Failed'; }
+    } catch (e) { btn.textContent = 'Failed'; showToast('Test email failed'); }
     setTimeout(() => { btn.textContent = 'Test Email'; btn.disabled = !localServerAvailable; }, 5000);
 });
 
