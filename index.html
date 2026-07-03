@@ -129,7 +129,7 @@
   .card-status.error { color: var(--red); }
   .card-status.nf    { color: var(--muted); }
   .card-checked { font-family: var(--mono); font-size: 10px; color: var(--muted); flex: 1; }
-  .card-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .badge      { font-size: 9px; font-weight: 700; padding: 2px 6px; letter-spacing: 0.1em; text-transform: uppercase; }
   .badge-drop  { background: rgba(16,185,129,0.15); color: var(--green); }
   .badge-range { background: rgba(245,158,11,0.1);  color: var(--amber); }
@@ -137,8 +137,20 @@
   .card-edit.open { max-height: 400px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
   .card-edit .row2 { grid-template-columns: 1fr 1fr; gap: 8px; }
   .card-edit .btn-primary { margin: 8px 0 0; padding: 7px; font-size: 11px; }
-  .card-history { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; margin-top: 0; }
-  .card-history.open { max-height: 400px; margin-top: 10px; }
+  #histModal { display: none; position: fixed; inset: 0; background: rgba(5,8,15,0.75); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
+  #histModal.open { display: flex; }
+  .hist-box { background: var(--surface); border: 1px solid var(--border2); border-radius: 12px; padding: 20px; width: min(92vw, 680px); max-height: 85vh; overflow-y: auto; }
+  .hist-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+  .hist-title { font-size: 0.95rem; font-weight: 700; color: #e2e8f0; line-height: 1.3; flex: 1; }
+  .hist-close { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: #94a3b8; cursor: pointer; padding: 4px 10px; font-size: 0.9rem; }
+  .hist-close:hover { border-color: var(--amber); color: var(--amber); }
+  .hist-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .hist-stat { background: rgba(15,22,41,0.7); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; min-width: 90px; }
+  .hist-stat .hs-label { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .hist-stat .hs-value { font-family: var(--mono); font-size: 14px; font-weight: 700; color: #e2e8f0; }
+  .hist-stat .hs-value.up   { color: #f87171; }
+  .hist-stat .hs-value.down { color: #4ade80; }
+  .hist-chart-wrap { position: relative; height: 280px; }
   .hist-msg { color: #94a3b8; font-size: 0.8rem; padding: 4px 0; }
 
   /* ── Results hero ── */
@@ -381,6 +393,19 @@
     </div>
   </div>
 </div>
+</div>
+
+<!-- Price History Dialog -->
+<div id="histModal" onclick="if(event.target===this)closeHistory()">
+  <div class="hist-box">
+    <div class="hist-head">
+      <div class="hist-title" id="histTitle"></div>
+      <button class="hist-close" onclick="closeHistory()" title="Close">&#10005;</button>
+    </div>
+    <div class="hist-stats" id="histStats"></div>
+    <div class="hist-chart-wrap"><canvas id="histCanvas"></canvas></div>
+    <div class="hist-msg" id="histMsg"></div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
@@ -1030,9 +1055,8 @@ async function loadWatches() {
 }
 
 function renderWatches(watches) {
-    Object.values(historyCharts).forEach(c => { try { c.destroy(); } catch {} });
-    for (const k in historyCharts) delete historyCharts[k];
-    for (const k in historyLoaded) delete historyLoaded[k];
+    watchesById = {};
+    (watches || []).forEach(w => { if (w && w.id) watchesById[w.id] = w; });
     const el=document.getElementById('watchCards');
     if (!watches||watches.length===0) { el.innerHTML='<div class="empty-state"><div class="empty-icon">&#9992;</div>No watches yet.</div>'; return; }
     el.innerHTML=''; watches.forEach(w=>el.appendChild(buildCard(w)));
@@ -1066,7 +1090,7 @@ function buildCard(w) {
       <div class="card-meta"><span class="card-status ${sc}">${sl}</span><span class="card-checked">${w.lastChecked||'Never checked'}</span></div>
       <div class="card-actions">
         <button class="btn btn-ghost" onclick="window.open('${buildFlightUrl(w)}','_blank')">View</button>
-        <button class="btn btn-ghost" onclick="toggleHistory('${w.id}')">History</button>
+        <button class="btn btn-ghost" onclick="openHistory('${w.id}')">History</button>
         <button class="btn btn-ghost" onclick="toggleEdit('${w.id}')">Edit</button>
         <button class="btn btn-ghost" onclick="toggleWatch('${w.id}',${!w.enabled})">${w.enabled?'Disable':'Enable'}</button>
         <button class="btn btn-danger" onclick="removeWatch('${w.id}')">Remove</button>
@@ -1076,24 +1100,37 @@ function buildCard(w) {
           <div class="field"><label>Target Price</label><input type="number" id="et-${w.id}" value="${w.targetPrice!=null?w.targetPrice:''}" placeholder="none" step="0.01"></div>
         </div>
         <button class="btn btn-primary" onclick="saveEdit('${w.id}')">SAVE</button>
-      </div>
-      <div class="card-history" id="hist-${w.id}"><canvas id="histcv-${w.id}" height="120"></canvas><div class="hist-msg" id="histmsg-${w.id}"></div></div>`;
+      </div>`;
     return div;
 }
 
 function toggleEdit(id){document.getElementById(`edit-${id}`).classList.toggle('open');}
 
-const historyLoaded = {};   // watchId -> true once fetched
-const historyCharts = {};   // watchId -> Chart instance
+let watchesById = {};   // id -> watch, refreshed by renderWatches
+let histChart = null;   // the dialog's Chart instance
 
-async function toggleHistory(id) {
-    const panel = document.getElementById(`hist-${id}`);
-    if (!panel) return;
-    const opening = !panel.classList.contains('open');
-    panel.classList.toggle('open');
-    if (!opening || historyLoaded[id]) return;
+function closeHistory() {
+    document.getElementById('histModal').classList.remove('open');
+    if (histChart) { try { histChart.destroy(); } catch {} histChart = null; }
+}
 
-    const msg = document.getElementById(`histmsg-${id}`);
+function histStatTile(label, value, cls) {
+    return `<div class="hist-stat"><div class="hs-label">${label}</div><div class="hs-value ${cls || ''}">${value}</div></div>`;
+}
+
+async function openHistory(id) {
+    const w = watchesById[id];
+    const cur = (w && w.currency) || 'USD';
+    const modal = document.getElementById('histModal');
+    const title = document.getElementById('histTitle');
+    const stats = document.getElementById('histStats');
+    const msg   = document.getElementById('histMsg');
+    title.textContent = w ? w.label : 'Price History';
+    stats.innerHTML = '';
+    msg.textContent = 'Loading...';
+    if (histChart) { try { histChart.destroy(); } catch {} histChart = null; }
+    modal.classList.add('open');
+
     if (typeof Chart === 'undefined') { msg.textContent = 'Chart library unavailable.'; return; }
     try {
         const rows = await fetch(
@@ -1102,32 +1139,48 @@ async function toggleHistory(id) {
         ).then(r => r.json());
         if (!Array.isArray(rows) || rows.length < 2) {
             msg.textContent = 'Not enough history yet.';
-            historyLoaded[id] = true;
             return;
         }
+        msg.textContent = '';
         const pad = n => String(n).padStart(2, '0');
         const labels = rows.map(r => {
             const d = new Date(r.checked_at);
             return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         });
         const data = rows.map(r => parseFloat(r.price));
-        if (historyCharts[id]) { try { historyCharts[id].destroy(); } catch {} }
-        historyCharts[id] = new Chart(document.getElementById(`histcv-${id}`), {
+
+        const lowest  = Math.min(...data);
+        const highest = Math.max(...data);
+        const current = data[data.length - 1];
+        const change  = current - data[0];
+        const changePct = data[0] !== 0 ? (change / data[0] * 100) : 0;
+        const spanDays = Math.max(1, Math.round((new Date(rows[rows.length-1].checked_at) - new Date(rows[0].checked_at)) / 86400000));
+        const changeCls = change < 0 ? 'down' : (change > 0 ? 'up' : '');
+        const changeArrow = change < 0 ? '&#9660;' : (change > 0 ? '&#9650;' : '');
+        stats.innerHTML =
+            histStatTile('Current', `${cur} ${current.toFixed(2)}`) +
+            histStatTile('Lowest', `${cur} ${lowest.toFixed(2)}`, 'down') +
+            histStatTile('Highest', `${cur} ${highest.toFixed(2)}`, 'up') +
+            histStatTile(`Change (${spanDays}d)`, `${changeArrow} ${cur} ${Math.abs(change).toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%)`, changeCls) +
+            histStatTile('Checks', String(rows.length));
+
+        histChart = new Chart(document.getElementById('histCanvas'), {
             type: 'line',
             data: { labels, datasets: [{ label: 'Price', data, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, tension: 0.2, pointRadius: 2 }] },
             options: {
-                plugins: { legend: { display: false } },
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${cur} ${c.parsed.y.toFixed(2)}` } } },
                 scales: {
-                    x: { ticks: { maxTicksLimit: 6, color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-                    y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } }
+                    x: { ticks: { maxTicksLimit: 8, color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                    y: { ticks: { color: '#94a3b8', callback: v => `${cur} ${v}` }, grid: { color: 'rgba(148,163,184,0.1)' } }
                 }
             }
         });
-        historyLoaded[id] = true;
     } catch (e) {
         msg.textContent = 'Could not load history.';
     }
 }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHistory(); });
 async function saveEdit(id) {
     const t = document.getElementById(`et-${id}`).value.trim();
     const res = await fetch(`${SUPABASE_URL}/rest/v1/watches?id=eq.${id}`, {
