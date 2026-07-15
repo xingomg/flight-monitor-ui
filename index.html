@@ -563,6 +563,8 @@ function buildFlightUrl(w) {
     const date = w.departureDate;
     return base + 'one+way+flights+from+' + w.origin + '+to+' + w.destination + '+on+' + date;
 }
+// NOTE: duplicates Build-UnitedAwardUrl in lib\united-awards.ps1 (no shared
+// code path from the single-file dashboard). Keep both in sync.
 function buildUnitedAwardUrl(w) {
     const base = 'https://www.united.com/en/us/fsr/choose-flights?';
     const tail = '&at=1&sc=7&px=1&taxng=1&newHP=True&clm=7&st=bestmatches&tqp=A';
