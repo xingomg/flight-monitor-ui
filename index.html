@@ -340,6 +340,7 @@
       <button id="tabResults" class="view-tab" disabled onclick="switchTab('results')">
         &#9992; Flight Results <span id="resultsPill" class="tab-pill" style="display:none">0</span>
       </button>
+      <button id="tabMiles" class="view-tab" onclick="switchTab('miles')">&#9733; Miles</button>
       <div class="nav-space"></div>
       <span class="refresh-lbl" id="refreshTime"></span>
       <button class="btn btn-ghost" id="btnAddWatch" style="margin-left:8px">+ Add Watch</button>
@@ -389,6 +390,33 @@
           <label>Target <input type="number" id="addTarget" placeholder="opt." step="0.01"></label>
         </div>
         <button class="btn btn-primary" id="btnAddSelected">ADD TO WATCH LIST</button>
+      </div>
+    </div>
+
+    <!-- Miles (United award) View -->
+    <div id="milesView" class="view-panel" style="display:none">
+      <div style="padding:12px 12px 0;">
+        <button class="btn btn-ghost" id="btnAddMilesWatch">+ Add Miles Watch</button>
+      </div>
+      <div id="addMilesForm" style="display:none;padding:14px;margin:12px;border:1px solid var(--border);border-radius:10px;background:rgba(15,22,41,0.7);max-width:680px;">
+        <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:8px;">United award (economy) &mdash; price tracked in MileagePlus miles</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div class="field"><label>From</label><input id="mwOrigin" placeholder="SFO" style="text-transform:uppercase"></div>
+          <div class="field"><label>To</label><input id="mwDest" placeholder="HKG" style="text-transform:uppercase"></div>
+          <div class="field"><label>Trip</label><select id="mwTrip"><option value="oneWay">One-way</option><option value="roundTrip">Round trip</option></select></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+          <div class="field"><label>Departure</label><input type="date" id="mwDate"></div>
+          <div class="field" id="mwReturnWrap" style="display:none"><label>Return</label><input type="date" id="mwReturn"></div>
+          <div class="field"><label>Target miles (optional)</label><input type="number" id="mwTarget" step="1000" min="0"></div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-primary" id="mwSubmit">ADD MILES WATCH</button>
+          <span id="mwError" style="color:#f87171;font-size:0.8rem;"></span>
+        </div>
+      </div>
+      <div class="watch-grid" id="milesCards">
+        <div class="empty-state"><div class="empty-icon">&#9733;</div>No miles watches yet.<br>Add a United award watch to track it.</div>
       </div>
     </div>
   </div>
@@ -535,6 +563,22 @@ function buildFlightUrl(w) {
     const date = w.departureDate;
     return base + 'one+way+flights+from+' + w.origin + '+to+' + w.destination + '+on+' + date;
 }
+function buildUnitedAwardUrl(w) {
+    const base = 'https://www.united.com/en/us/fsr/choose-flights?';
+    const tail = '&at=1&sc=7&px=1&taxng=1&newHP=True&clm=7&st=bestmatches&tqp=A';
+    if (w.tripType === 'roundTrip') {
+        return base + 'f=' + w.origin + '&t=' + w.destination + '&d=' + w.departureDate + '&r=' + w.returnDate + '&tt=2' + tail;
+    }
+    return base + 'f=' + w.origin + '&t=' + w.destination + '&d=' + w.departureDate + '&tt=1' + tail;
+}
+function buildWatchUrl(w) {
+    return w.pricing === 'miles' ? buildUnitedAwardUrl(w) : buildFlightUrl(w);
+}
+function fmtWatchPrice(cur, n) {
+    const v = parseFloat(n);
+    if (cur === 'MILES') return Math.round(v).toLocaleString('en-US') + ' miles';
+    return cur + ' ' + v.toFixed(2);
+}
 function showToast(msg) {
     if (!document.body) return;
     const t = document.createElement('div');
@@ -551,7 +595,7 @@ function toIsoDate(d) {
 (function setDefaultDates() {
     const plus = days => { const d = new Date(); d.setDate(d.getDate() + days); return toIsoDate(d); };
     const d14 = plus(14), d21 = plus(21);
-    [['inSingleDate', d14], ['inDateFrom', d14], ['inDateTo', d21], ['inDepart', d14], ['inReturn', d21], ['awDate', d14], ['awReturn', d21]].forEach(([id, v]) => {
+    [['inSingleDate', d14], ['inDateFrom', d14], ['inDateTo', d21], ['inDepart', d14], ['inReturn', d21], ['awDate', d14], ['awReturn', d21], ['mwDate', d14], ['mwReturn', d21]].forEach(([id, v]) => {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = v;
     });
@@ -577,11 +621,13 @@ document.querySelectorAll('[name=tripType]').forEach(r => r.addEventListener('ch
 }));
 
 function switchTab(w) {
-    const r = w==='results';
-    document.getElementById('watchView').style.display   = r ? 'none' : '';
-    document.getElementById('resultsView').style.display = r ? '' : 'none';
-    document.getElementById('tabWatches').classList.toggle('active',!r);
-    document.getElementById('tabResults').classList.toggle('active', r);
+    const views = { watches: 'watchView', results: 'resultsView', miles: 'milesView' };
+    for (const k in views) {
+        document.getElementById(views[k]).style.display = (k === w) ? '' : 'none';
+    }
+    document.getElementById('tabWatches').classList.toggle('active', w === 'watches');
+    document.getElementById('tabResults').classList.toggle('active', w === 'results');
+    document.getElementById('tabMiles').classList.toggle('active', w === 'miles');
 }
 
 function updateAddBar() {
@@ -1054,12 +1100,23 @@ async function loadWatches() {
     }
 }
 
-function renderWatches(watches) {
+function renderWatches(all) {
     watchesById = {};
-    (watches || []).forEach(w => { if (w && w.id) watchesById[w.id] = w; });
-    const el=document.getElementById('watchCards');
-    if (!watches||watches.length===0) { el.innerHTML='<div class="empty-state"><div class="empty-icon">&#9992;</div>No watches yet.</div>'; return; }
-    el.innerHTML=''; watches.forEach(w=>el.appendChild(buildCard(w)));
+    (all || []).forEach(w => { if (w && w.id) watchesById[w.id] = w; });
+    const cash  = (all || []).filter(w => w.pricing !== 'miles');
+    const miles = (all || []).filter(w => w.pricing === 'miles');
+    renderGrid(cash, 'watchCards', '&#9992;', 'No watches yet.<br>Search for a flight and add it to your list.');
+    renderGrid(miles, 'milesCards', '&#9733;', 'No miles watches yet.<br>Add a United award watch to track it.');
+}
+
+function renderGrid(list, elId, icon, emptyMsg) {
+    const el = document.getElementById(elId);
+    if (!list || list.length === 0) {
+        el.innerHTML = '<div class="empty-state"><div class="empty-icon">' + icon + '</div>' + emptyMsg + '</div>';
+        return;
+    }
+    el.innerHTML = '';
+    list.forEach(w => el.appendChild(buildCard(w)));
 }
 
 function buildCard(w) {
@@ -1067,29 +1124,30 @@ function buildCard(w) {
     const wCur=w.currency||'USD';
     const timeStr=w.departureTime?' · '+w.departureTime:'';
     const dateStr=w.dateMode==='range'?`${w.dateFrom} to ${w.dateTo}`:isRound?`${w.departureDate} -> ${w.returnDate}`:`${w.departureDate}${timeStr}`;
-    const priceStr=w.lastPrice!=null?`${wCur} ${parseFloat(w.lastPrice).toFixed(2)}`:'--';
+    const priceStr=w.lastPrice!=null?fmtWatchPrice(wCur, w.lastPrice):'--';
     const delta = priceDeltas[w.id];
     const deltaHtml = delta != null
-        ? `<span class="price-delta-${delta < 0 ? 'down' : 'up'}">${delta < 0 ? '&#9660;' : '&#9650;'} ${wCur} ${Math.abs(delta).toFixed(2)}</span>`
+        ? `<span class="price-delta-${delta < 0 ? 'down' : 'up'}">${delta < 0 ? '&#9660;' : '&#9650;'} ${fmtWatchPrice(wCur, Math.abs(delta))}</span>`
         : '';
     const isAbove=w.targetPrice!=null&&w.lastPrice!=null&&parseFloat(w.lastPrice)>parseFloat(w.targetPrice);
-    const targetStr=w.targetPrice!=null?`target <span class="${!isAbove?'hit':''}">${wCur} ${parseFloat(w.targetPrice).toFixed(2)}</span>`:'no target';
+    const targetStr=w.targetPrice!=null?`target <span class="${!isAbove?'hit':''}">${fmtWatchPrice(wCur, w.targetPrice)}</span>`:'no target';
     let sc='ok',sl='OK';
     if (!w.enabled){sc='';sl='DISABLED';} else if(w.status==='ERROR'){sc='error';sl='ERROR';} else if(w.status==='NOT_FOUND'){sc='nf';sl='NOT FOUND';}
     const lBadge=(w.lowestSeen!=null&&w.lastPrice!=null&&parseFloat(w.lastPrice)<=parseFloat(w.lowestSeen))?'<span class="badge badge-drop">LOW</span>':'';
     const rBadge=w.dateMode==='range'?'<span class="badge badge-range">RANGE</span>':'';
     const rtBadge=isRound?'<span class="badge badge-range">ROUND TRIP</span>':'';
+    const milesBadge=w.pricing==='miles'?'<span class="badge badge-range">MILES</span>':'';
     const airlineHtml=w.airline?`<div class="card-airline">${w.airline}${w.flightNumber?' &middot; '+w.flightNumber:''}</div>`:'';
     const div=document.createElement('div');
     div.className=`card status-${sc}${!w.enabled?' status-disabled':''}`;
     div.dataset.id=w.id;
     div.innerHTML=`${airlineHtml}
-      <div class="card-route">${w.origin} ${isRound?'&#8644;':'&#8594;'} ${w.destination} ${lBadge}${rBadge}${rtBadge}</div>
+      <div class="card-route">${w.origin} ${isRound?'&#8644;':'&#8594;'} ${w.destination} ${lBadge}${rBadge}${rtBadge}${milesBadge}</div>
       <div class="card-date">${dateStr} &middot; every ${CHECK_INTERVAL_MIN} min</div>
       <div class="card-prices"><div class="card-price-now${isAbove?' above-target':''}">${priceStr} ${deltaHtml}</div><div class="card-price-target">${targetStr}</div></div>
       <div class="card-meta"><span class="card-status ${sc}">${sl}</span><span class="card-checked">${w.lastChecked||'Never checked'}</span></div>
       <div class="card-actions">
-        <button class="btn btn-ghost" onclick="window.open('${buildFlightUrl(w)}','_blank')">View</button>
+        <button class="btn btn-ghost" onclick="window.open('${buildWatchUrl(w)}','_blank')">View</button>
         <button class="btn btn-ghost" onclick="openHistory('${w.id}')">History</button>
         <button class="btn btn-ghost" onclick="toggleEdit('${w.id}')">Edit</button>
         <button class="btn btn-ghost" onclick="toggleWatch('${w.id}',${!w.enabled})">${w.enabled?'Disable':'Enable'}</button>
@@ -1158,10 +1216,10 @@ async function openHistory(id) {
         const changeCls = change < 0 ? 'down' : (change > 0 ? 'up' : '');
         const changeArrow = change < 0 ? '&#9660;' : (change > 0 ? '&#9650;' : '');
         stats.innerHTML =
-            histStatTile('Current', `${cur} ${current.toFixed(2)}`) +
-            histStatTile('Lowest', `${cur} ${lowest.toFixed(2)}`, 'down') +
-            histStatTile('Highest', `${cur} ${highest.toFixed(2)}`, 'up') +
-            histStatTile(`Change (${spanDays}d)`, `${changeArrow} ${cur} ${Math.abs(change).toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%)`, changeCls) +
+            histStatTile('Current', fmtWatchPrice(cur, current)) +
+            histStatTile('Lowest', fmtWatchPrice(cur, lowest), 'down') +
+            histStatTile('Highest', fmtWatchPrice(cur, highest), 'up') +
+            histStatTile(`Change (${spanDays}d)`, `${changeArrow} ${fmtWatchPrice(cur, Math.abs(change))} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%)`, changeCls) +
             histStatTile('Checks', String(rows.length));
 
         histChart = new Chart(document.getElementById('histCanvas'), {
@@ -1169,10 +1227,10 @@ async function openHistory(id) {
             data: { labels, datasets: [{ label: 'Price', data, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, tension: 0.2, pointRadius: 2 }] },
             options: {
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${cur} ${c.parsed.y.toFixed(2)}` } } },
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => fmtWatchPrice(cur, c.parsed.y) } } },
                 scales: {
                     x: { ticks: { maxTicksLimit: 8, color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-                    y: { ticks: { color: '#94a3b8', callback: v => `${cur} ${v}` }, grid: { color: 'rgba(148,163,184,0.1)' } }
+                    y: { ticks: { color: '#94a3b8', callback: v => cur === 'MILES' ? Math.round(v).toLocaleString('en-US') : `${cur} ${v}` }, grid: { color: 'rgba(148,163,184,0.1)' } }
                 }
             }
         });
@@ -1353,6 +1411,10 @@ document.getElementById('btnAddWatch').addEventListener('click', () => {
     f.style.display = f.style.display === 'none' ? 'block' : 'none';
     switchTab('watches');
 });
+document.getElementById('btnAddMilesWatch').addEventListener('click', () => {
+    const f = document.getElementById('addMilesForm');
+    if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+});
 document.getElementById('awTrip').addEventListener('change', e => {
     document.getElementById('awReturnWrap').style.display = e.target.value === 'roundTrip' ? 'block' : 'none';
 });
@@ -1394,6 +1456,47 @@ document.getElementById('awSubmit').addEventListener('click', async () => {
 });
 setupAirportAutocomplete('awOrigin');
 setupAirportAutocomplete('awDest');
+document.getElementById('mwTrip').addEventListener('change', e => {
+    document.getElementById('mwReturnWrap').style.display = e.target.value === 'roundTrip' ? 'block' : 'none';
+});
+document.getElementById('mwSubmit').addEventListener('click', async () => {
+    const err = document.getElementById('mwError');
+    err.textContent = '';
+    const origin = document.getElementById('mwOrigin').value.trim().toUpperCase();
+    const dest   = document.getElementById('mwDest').value.trim().toUpperCase();
+    const trip   = document.getElementById('mwTrip').value;
+    const date   = document.getElementById('mwDate').value;
+    const ret    = document.getElementById('mwReturn').value;
+    const target = document.getElementById('mwTarget').value;
+    if (!/^[A-Z]{3}$/.test(origin))   { err.textContent = 'From must be a 3-letter airport code.'; return; }
+    if (!/^[A-Z]{3}$/.test(dest))     { err.textContent = 'To must be a 3-letter airport code.'; return; }
+    if (!date)                        { err.textContent = 'Departure date is required.'; return; }
+    if (trip === 'roundTrip' && !ret) { err.textContent = 'Return date is required for round trip.'; return; }
+    if (trip === 'roundTrip' && ret && ret < date) { err.textContent = 'Return date must be on or after departure.'; return; }
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(16).padStart(2, '0')).join('');
+    const isRT = trip === 'roundTrip';
+    const label = `United | ${origin} ${isRT ? '<->' : '->'} ${dest} | ${isRT ? date + ' / ' + ret : date}`;
+    const watch = {
+        id, label, origin, destination: dest,
+        dateMode: 'specific', departureDate: date,
+        returnDate: isRT ? ret : null, tripType: trip,
+        currency: 'MILES', pricing: 'miles',
+        targetPrice: target ? parseFloat(target) : null,
+        airline: 'United', flightNumber: null, departureTime: null,
+        returnAirline: null, returnFlightNumber: null, returnDepartureTime: null,
+        enabled: true, status: 'Pending', lastPrice: null, lowestSeen: null,
+        lastChecked: null, addedAt: new Date().toISOString()
+    };
+    try {
+        await createWatch(watch);
+        document.getElementById('addMilesForm').style.display = 'none';
+        ['mwOrigin','mwDest','mwDate','mwReturn','mwTarget'].forEach(i => { document.getElementById(i).value = ''; });
+        loadWatches();
+        showToast('Miles watch added');
+    } catch (e) { err.textContent = 'Error: ' + e.message; }
+});
+setupAirportAutocomplete('mwOrigin');
+setupAirportAutocomplete('mwDest');
 
 function togglePanelCollapse() {
     if (window.innerWidth > 768) return;   // desktop: no-op
